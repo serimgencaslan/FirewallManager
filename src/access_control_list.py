@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List
+from typing import List, Dict, Optional
 
 from src.firewall_base import FirewallBase
 from src.firewall_manager import FirewallManager
@@ -8,67 +8,105 @@ from src.firewall_manager import FirewallManager
 class AccessControlList(FirewallBase):
     def __init__(self) -> None:
         super().__init__()
-        self.whitelist_filename = str(os.getenv("WHITELIST_FILE_PATH"))
-        self.blacklist_filename = str(os.getenv("BLACKLIST_FILE_PATH"))
+        self.whitelist_filename = str(os.getenv("WHITELIST_FILE_PATH", "whitelist.json"))
+        self.blacklist_filename = str(os.getenv("BLACKLIST_FILE_PATH", "blacklist.json"))
+        self.rules_filename = str(os.getenv("RULES_FILE_PATH", "acl_rules.json"))
+
+        # Load IP lists and ACL rules
         self.whitelist = self.load_ip_list(self.whitelist_filename)
         self.blacklist = self.load_ip_list(self.blacklist_filename)
+        self.acl_rules = self.load_rules(self.rules_filename)
 
-    def load_ip_list(self, filename:str) -> List[str]:
-        """ load IP list from a json file
-
-        Args:
-            filename (str): file name of the json file which includes IP list
-
-        Returns:
-            List[str]: list of IP addresses
-        """
+    def load_ip_list(self, filename: str) -> List[str]:
         try:
             with open(filename, 'r') as file:
                 return json.load(file)
-        except FileNotFoundError:
+        except (FileNotFoundError, json.JSONDecodeError):
             return []
 
     def save_ip_list(self, filename: str, ip_list: List[str]) -> None:
-        """ save IP list into a json file
-
-        Args:
-            filename (str): filename of the json file which will be saved
-            ip_list (List[str]): list of IP addresses which will be saved
-        """
         with open(filename, 'w') as file:
             json.dump(ip_list, file)
 
-    def apply_rule(self, rule:str) -> None:
-        """ apply the rule
+    def load_rules(self, filename: str) -> List[Dict[str, Optional[str]]]:
+        try:
+            with open(filename, 'r') as file:
+                return json.load(file)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
 
-        Args:
-            rule (str): the rule wihch will be applied.
-        """
+    def save_rules(self, filename: str, rules: List[Dict[str, Optional[str]]]) -> None:
+        with open(filename, 'w') as file:
+            json.dump(rules, file)
+
+    def apply_rule(self, rule: str) -> None:
         FirewallManager.run_command(rule)
         self.rules.append(rule)
 
-    def block_ip(self, ip_address:str) -> None:
-        """ block the ip address 
-
-        Args:
-            ip_address (str): the IP address which will be blocked
-        """
-        rule = f"sudo iptables -A INPUT -s {ip_address} -j DROP"
-        self.apply_rule(rule)
-        if ip_address not in self.blacklist:
-            self.blacklist.append(ip_address)
-            self.save_ip_list(self.blacklist_filename, self.blacklist)
-        self.log_rule("IP Blocked", f"Blocked IP: {ip_address}")
-
-    def allow_ip(self, ip_address:str) -> None:
-        """ allow the ip address 
-
-        Args:
-            ip_address (str): the IP address which will be allowed
-        """
-        rule = f"sudo iptables -A INPUT -s {ip_address} -j ACCEPT"
-        self.apply_rule(rule)
-        if ip_address not in self.whitelist:
-            self.whitelist.append(ip_address)
+    def update_whitelist(self, ip: str) -> None:
+        if ip not in self.whitelist:
+            self.whitelist.append(ip)
             self.save_ip_list(self.whitelist_filename, self.whitelist)
-        self.log_rule("IP Allowed", f"Allowed IP: {ip_address}")
+            self.log_rule("Whitelist Updated", f"Added {ip} to whitelist")
+
+    def update_blacklist(self, ip: str) -> None:
+        if ip not in self.blacklist:
+            self.blacklist.append(ip)
+            self.save_ip_list(self.blacklist_filename, self.blacklist)
+            self.log_rule("Blacklist Updated", f"Added {ip} to blacklist")
+
+    def add_acl_rule(self, ip: str, port: Optional[int] = None, protocol: Optional[str] = None, action: str = "ALLOW") -> None:
+        if action.upper() not in ["ALLOW", "BLOCK"]:
+            raise ValueError("Action must be 'ALLOW' or 'BLOCK'")
+
+        rule = f"sudo iptables -A INPUT -s {ip}"
+        if protocol:
+            rule += f" -p {protocol.lower()}"
+        if port:
+            rule += f" --dport {port}"
+        rule += f" -j {'ACCEPT' if action.upper() == 'ALLOW' else 'DROP'}"
+
+        self.apply_rule(rule)
+        
+        # Whitelist veya blacklist güncelle
+        if action.upper() == "ALLOW":
+            self.update_whitelist(ip)
+        else:
+            self.update_blacklist(ip)
+
+        # ACL kurallarını kaydet
+        self.acl_rules.append({"ip": ip, "port": port, "protocol": protocol, "action": action})
+        self.save_rules(self.rules_filename, self.acl_rules)
+        self.log_rule("ACL Rule Added", f"Rule: {action} IP: {ip}, Port: {port}, Protocol: {protocol}")
+
+    def remove_acl_rule(self, ip:str, port:Optional[int] = None, protocol:Optional[str] = None) -> None:
+        """
+        Remove a specific ACL rule from both the internal list and iptables.
+
+        Args:
+            ip (str): The IP address of the rule to remove
+            port (Optional[int]): The port number of the rule to remove(optional)
+            protocol (Optional[str]): The protocol of the rule to remove ("tcp" or "udp", optional)
+        """
+        self.acl_rules = [
+            rule for rule in self.acl_rules
+            if not (rule['ip'] == ip and rule.get('port') == port and rule.get('protocol') == protocol)
+        ]
+        self.save_rules(self.rules_filename, self.acl_rules)
+        self.log_rule("ACL Rule Removed", f"Removed rule for IP: {ip}, Port: {port}, Protocol: {protocol}")
+
+        rule = f"sudo iptables -D INPUT -s {ip}"
+        if protocol:
+            rule += f" -p {protocol.lower()}"
+        if port:
+            rule += f" --dport {port}"
+        rule += f" -j {'ACCEPT' if self.is_ip_whitelisted(ip) else 'DROP'}"
+
+        FirewallManager.run_command(rule)
+
+    def is_ip_whitelisted(self, ip:str) -> bool:
+        """Check if an IP is in the whitelist"""
+        return ip in self.whitelist
+
+    def list_acl_rules(self) -> List[Dict[str, Optional[str]]]:
+        return self.acl_rules
