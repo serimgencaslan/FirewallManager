@@ -55,8 +55,9 @@ class AccessControlList(FirewallBase):
         """
         rule = f"sudo iptables -A INPUT -s {ip_address} -j DROP"
         self.apply_rule(rule)
-        self.blacklist.append(ip_address)
-        self.save_ip_list(self.blacklist_filename, self.blacklist)
+        if ip_address not in self.blacklist:
+            self.blacklist.append(ip_address)
+            self.save_ip_list(self.blacklist_filename, self.blacklist)
         self.log_rule("IP Blocked", f"Blocked IP: {ip_address}")
 
     def allow_ip(self, ip_address:str) -> None:
@@ -67,6 +68,7 @@ class AccessControlList(FirewallBase):
         """
         rule = f"sudo iptables -A INPUT -s {ip_address} -j ACCEPT"
         self.apply_rule(rule)
-        self.whitelist.append(ip_address)
-        self.save_ip_list(self.whitelist_filename, self.whitelist)
+        if ip_address not in self.whitelist:
+            self.whitelist.append(ip_address)
+            self.save_ip_list(self.whitelist_filename, self.whitelist)
         self.log_rule("IP Allowed", f"Allowed IP: {ip_address}")
