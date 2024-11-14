@@ -33,7 +33,7 @@ class PacketFilter(FirewallBase):
         if dest_ip:
             rule += f" -d {dest_ip}"
         rule += " -j DROP"
-        
+
         self.apply_rule(rule)
         self.log_rule("Port Blocked", f"Blocked {protocol.upper()} port {port}, Source IP: {src_ip}, Destination IP: {dest_ip}")
 

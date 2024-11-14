@@ -68,26 +68,26 @@ class AccessControlList(FirewallBase):
 
         self.apply_rule(rule)
         
-        # Whitelist veya blacklist güncelle
         if action.upper() == "ALLOW":
             self.update_whitelist(ip)
         else:
             self.update_blacklist(ip)
 
-        # ACL kurallarını kaydet
         self.acl_rules.append({"ip": ip, "port": port, "protocol": protocol, "action": action})
         self.save_rules(self.rules_filename, self.acl_rules)
         self.log_rule("ACL Rule Added", f"Rule: {action} IP: {ip}, Port: {port}, Protocol: {protocol}")
 
-    def remove_acl_rule(self, ip:str, port:Optional[int] = None, protocol:Optional[str] = None) -> None:
+
+    def remove_acl_rule(self, ip: str, port: Optional[int] = None, protocol: Optional[str] = None) -> None:
         """
         Remove a specific ACL rule from both the internal list and iptables.
 
         Args:
             ip (str): The IP address of the rule to remove
-            port (Optional[int]): The port number of the rule to remove(optional)
+            port (Optional[int]): The port number of the rule to remove (optional)
             protocol (Optional[str]): The protocol of the rule to remove ("tcp" or "udp", optional)
         """
+        # Remove the rule from the internal ACL list
         self.acl_rules = [
             rule for rule in self.acl_rules
             if not (rule['ip'] == ip and rule.get('port') == port and rule.get('protocol') == protocol)
@@ -95,14 +95,36 @@ class AccessControlList(FirewallBase):
         self.save_rules(self.rules_filename, self.acl_rules)
         self.log_rule("ACL Rule Removed", f"Removed rule for IP: {ip}, Port: {port}, Protocol: {protocol}")
 
+        # Build the iptables delete command
         rule = f"sudo iptables -D INPUT -s {ip}"
         if protocol:
             rule += f" -p {protocol.lower()}"
         if port:
             rule += f" --dport {port}"
-        rule += f" -j {'ACCEPT' if self.is_ip_whitelisted(ip) else 'DROP'}"
+        
+        # Determine if the original rule was ACCEPT or DROP
+        if ip in self.whitelist:
+            rule += " -j ACCEPT"
+        else:
+            rule += " -j DROP"
 
-        FirewallManager.run_command(rule)
+        # Check if the rule exists before attempting to delete it
+        try:
+            # Komutları kontrol etmek için doğrudan subprocess kullanıyoruz
+            list_command = "sudo iptables -S INPUT"
+            import subprocess
+
+            result = subprocess.run(list_command, shell=True, capture_output=True, text=True)
+
+            # Çıktıda kuralın olup olmadığını kontrol ediyoruz
+            if rule in result.stdout:
+                FirewallManager.run_command(rule)
+            else:
+                self.log_rule("Rule Not Found", f"No matching iptables rule found for: {rule}")
+        except Exception as e:
+            self.log_rule("Command Failed", f"Error: {str(e)}")
+
+
 
     def is_ip_whitelisted(self, ip:str) -> bool:
         """Check if an IP is in the whitelist"""

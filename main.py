@@ -21,7 +21,7 @@ def main():
     print("Mevcut ACL rules:", acl.list_acl_rules())
     
     # remove ACL rule
-    acl.remove_acl_rule(ip="192.168.1.101", port=80, protocol="tcp")
+    acl.remove_acl_rule(ip="192.168.1.101", protocol="tcp")
     
     print("Güncellenmiş ACL rules:", acl.list_acl_rules())
     
